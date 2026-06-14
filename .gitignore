@@ -1,0 +1,25 @@
+# secrets / runtime data
+.env
+.env.*
+!.env.example
+data/
+*.fit
+
+# real k8s Secret (only the *.example.yaml is committed)
+k8s/secret.yaml
+k8s/*secret*.yaml
+!k8s/secret.example.yaml
+
+# auth tokens / keys (defensive; tokens normally live under data/)
+*tokens*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/

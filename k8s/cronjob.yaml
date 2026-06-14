@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: healthplanet-garmin-sync
+  namespace: healthplanet-garmin-sync
+spec:
+  # Twice daily at 10:17 and 22:17 JST. Minute is offset off :00 on purpose to
+  # avoid the top-of-the-hour stampede when everyone's cron fires at once.
+  # Requires k8s/k3s >= 1.27 for timeZone.
+  schedule: "17 10,22 * * *"
+  timeZone: Asia/Tokyo
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+          containers:
+            - name: sync
+              image: healthplanet-garmin-sync:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: healthplanet-garmin-sync
+              env:
+                - name: DATA_DIR
+                  value: /data
+                - name: LOOKBACK_DAYS
+                  value: "90"
+                # HealthPlanet measurements are JST; keep the container in JST too.
+                - name: TZ
+                  value: Asia/Tokyo
+                # Only sync measurements AFTER this date, so weights already in
+                # Garmin (e.g. entered manually) are not re-uploaded. Set this to
+                # your deploy date on first rollout. Harmless to leave afterwards.
+                # - name: SYNC_SINCE
+                #   value: "20260614"
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 192Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: healthplanet-garmin-sync-data

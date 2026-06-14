@@ -1,0 +1,23 @@
+# Keep secrets and runtime data out of the build context / image.
+.env
+.env.*
+!.env.example
+data/
+*.fit
+k8s/secret.yaml
+k8s/*secret*.yaml
+!k8s/secret.example.yaml
+*tokens*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# misc
+.git/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+README.md

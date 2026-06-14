@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: healthplanet-garmin-sync-data
+  namespace: healthplanet-garmin-sync
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 64Mi
+  # Use your homelab's default storageClass (k3s local-path by default).
+  # storageClassName: local-path
