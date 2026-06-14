@@ -39,9 +39,11 @@ HealthPlanet API (体重 tag 6021)
 
 ## 認証情報
 
-- **HealthPlanet**: <https://www.healthplanet.jp/apis/registinfo.do> でアプリ登録し
-  `client_id` / `client_secret` を取得。`redirect_uri` は登録した URL に合わせる
-  （非Webアプリは `https://www.healthplanet.jp/success.html` が使える）。
+- **HealthPlanet**: <https://www.healthplanet.jp/apis_account.do> でアプリ登録し
+  `client_id` / `client_secret` を取得。**クライアント（非Web）アプリケーション** として登録する
+  — この種別は **リダイレクトURI欄が無い** のが正常。`HEALTHPLANET_REDIRECT_URI=https://www.healthplanet.jp/success.html`
+  （または `https://localhost`）をそのまま使う。認可スクリプト実行後にアクセスを許可すると、
+  認可コードが success ページに表示されるので、スクリプトのプロンプトに貼り戻す。
 - **Garmin Connect**: メール / パスワード（MFA 無効前提）。
 
 > 注: Garmin への書き込みは公式公開 API ではなく `upload-service` 経由（Garmin アプリと同じ
@@ -218,7 +220,14 @@ kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{
 ## トラブルシュート
 
 - **`No HealthPlanet tokens found`**: `scripts/authorize_healthplanet.py` を未実行。
+- **`invalid_client: client_id is not registered`（HTTP 400）**: 認可URLに雛形/誤った `client_id`
+  が入ったまま。**実際に登録した値** を `.env`（k8s では Secret）に入れる（両方一致が必要）。
+  その後、認可スクリプトを再実行。
 - **HealthPlanet refresh 失敗 / 401**: refresh_token 失効。再度認可スクリプトを実行。
+- **Garmin `mobile login ... 429`（IPレート制限）**: 多くは **非致命** — 別のログイン経路へ
+  フォールバックして成功することがある。`data/garmin_tokens/` と `data/state.json`
+  （k8s では PVC 内）が書かれていれば成功。本当に失敗する場合は、**しばらく待ってから** 再実行
+  （短時間の連打は制限を延ばす）。
 - **Garmin 認証失敗**: パスワード誤り / アカウントロック / MFA が有効になっている。
   MFA を有効にした場合は `src/garmin.py` で `prompt_mfa` を渡す対応が必要。
 - **日付がずれる**: コンテナ `TZ=Asia/Tokyo` を確認（FIT は UTC 換算で書く）。

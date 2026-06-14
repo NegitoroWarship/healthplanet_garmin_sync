@@ -41,9 +41,12 @@ a PVC at `/data` on k8s).
 
 ## Credentials
 
-- **HealthPlanet**: register an app at <https://www.healthplanet.jp/apis/registinfo.do>
-  and obtain `client_id` / `client_secret`. Set `redirect_uri` to match the URL you
-  registered (for non-web apps, `https://www.healthplanet.jp/success.html` works).
+- **HealthPlanet**: register an app at <https://www.healthplanet.jp/apis_account.do> and obtain
+  `client_id` / `client_secret`. Register it as a **client (non-web) application** — that type
+  has **no redirect-URI field** (this is expected); just keep
+  `HEALTHPLANET_REDIRECT_URI=https://www.healthplanet.jp/success.html` (or `https://localhost`).
+  When you run the authorization script and approve access, the **authorization code is shown on
+  the success page** — copy it back into the script's prompt.
 - **Garmin Connect**: email / password (assumes MFA is disabled).
 
 > Note: writing to Garmin does not use an official public API; it goes through the
@@ -227,8 +230,15 @@ kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{
 ## Troubleshooting
 
 - **`No HealthPlanet tokens found`**: `scripts/authorize_healthplanet.py` hasn't been run.
+- **`invalid_client: client_id is not registered` (HTTP 400)**: the authorize URL still carries a
+  placeholder/wrong `client_id`. Put the **real registered** value in `.env` (and, on k8s, the
+  Secret) — both must match. Re-run the authorization script.
 - **HealthPlanet refresh fails / 401**: the refresh_token expired. Run the authorization
   script again.
+- **Garmin `mobile login ... 429` (IP rate limited)**: usually **non-fatal** — the client falls
+  back to another login path and the run can still succeed. Confirm by checking that
+  `data/garmin_tokens/` and `data/state.json` got written (on k8s, inside the PVC). If login
+  genuinely fails, **wait** before retrying; rapid retries extend the limit.
 - **Garmin auth fails**: wrong password / account locked / MFA enabled. If you enable MFA,
   you must pass `prompt_mfa` in `src/garmin.py`.
 - **Dates are off**: check the container `TZ=Asia/Tokyo` (FIT is written in UTC).
