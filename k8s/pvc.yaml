@@ -9,5 +9,6 @@ spec:
   resources:
     requests:
       storage: 64Mi
-  # Use your homelab's default storageClass (k3s local-path by default).
+  # Uses the cluster's default storageClass when unset. Set it explicitly if your
+  # cluster has no default (e.g. local-path on some lightweight distributions).
   # storageClassName: local-path

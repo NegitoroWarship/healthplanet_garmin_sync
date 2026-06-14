@@ -3,7 +3,7 @@
 📖 [English README → README.md](README.md) · **日本語**
 
 タニタの **HealthPlanet** に蓄積された体重を、**Garmin Connect** へ非同期で同期するブリッジ。
-homelab の k3s 上で **1日2回** （10:17 / 22:17 JST）動き、**新しい計測があった時だけ** Garmin にアップロードする。
+homelab の Kubernetes 上で **1日2回** （10:17 / 22:17 JST）動き、**新しい計測があった時だけ** Garmin にアップロードする。
 
 ```
 HealthPlanet API (体重 tag 6021)
@@ -89,9 +89,9 @@ docker build -t healthplanet-garmin-sync:latest .
 docker run --rm -v "$PWD/data:/data" --env-file .env healthplanet-garmin-sync:latest
 ```
 
-## Kubernetes (k3s) へのデプロイ
+## Kubernetes へのデプロイ
 
-`k8s/` に Namespace / PVC / Secret(雛形) / CronJob を同梱。homelab の k3s で1日2回（10:17 / 22:17 JST）動かす。
+`k8s/` に Namespace / PVC / Secret(雛形) / CronJob を同梱。homelab の Kubernetes で1日2回（10:17 / 22:17 JST）動かす。
 
 ポイント:
 
@@ -103,19 +103,22 @@ docker run --rm -v "$PWD/data:/data" --env-file .env healthplanet-garmin-sync:la
 
 ### 0. 前提
 
-- `kubectl` が homelab の k3s クラスタを指していること（`kubectl get nodes` で確認）。
+- `kubectl` が homelab の Kubernetes クラスタを指していること（`kubectl get nodes` で確認）。
 - イメージを **Job を実行するノードに載せる** こと（下記）。複数ノードなら全ノードに取り込むか
   プライベートレジストリを使う。
 
-### 1. イメージをビルドして k3s に取り込む（レジストリ不要）
+### 1. イメージをビルドしてクラスタのノードに載せる
 
 ```bash
 docker build -t healthplanet-garmin-sync:latest .
 docker save healthplanet-garmin-sync:latest -o /tmp/hpgs.tar
+# ノードのコンテナランタイムへ side-load する。コマンドはランタイム依存で、
+# k3s(containerd) の場合は次のとおり:
 sudo k3s ctr images import /tmp/hpgs.tar          # 各ノードで実行
 ```
 
-> レジストリを使う場合は push して `k8s/cronjob.yaml` の `image:` をそのタグに合わせる。
+> もしくはクラスタが pull できるコンテナレジストリへ push し、`k8s/cronjob.yaml` の
+> `image:` をそのタグに合わせる（複数ノードでの標準的なやり方）。
 
 ### 2. Namespace / PVC / Secret を作成
 
@@ -203,13 +206,13 @@ kubectl -n healthplanet-garmin-sync logs job/<job-name>
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":true}}'
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":false}}'
 
-# コード更新時: 再ビルド → k3s に再 import → 新しいタグで cronjob を更新
+# コード更新時: 再ビルド → ノードに再 import → 新しいタグで cronjob を更新
 #   （:latest を使い回す場合も import し直せば次回 Job から反映される）
 ```
 
 > `schedule`/`timeZone` を変えたいときは `k8s/cronjob.yaml` を編集して `kubectl apply` し直す。
 > 分を `:00` ちょうどにせず半端な分にしてあるのは、毎時0分に集中するアクセスを避けるため。
-> `timeZone` は k8s/k3s **v1.27 以降** が必要。古い場合はこの行を消し、UTC基準で
+> `timeZone` は Kubernetes **v1.27 以降** が必要。古い場合はこの行を消し、UTC基準で
 > `schedule: "17 1,13 * * *"`（= 10:17 / 22:17 JST）に書き換える。
 
 ## トラブルシュート

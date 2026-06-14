@@ -1,6 +1,6 @@
 # CLAUDE.md — healthplanet_garmin_sync
 
-HealthPlanet（タニタ）の体重を Garmin Connect へ同期する使い捨てバッチ。k3s の CronJob で
+HealthPlanet（タニタ）の体重を Garmin Connect へ同期する使い捨てバッチ。Kubernetes の CronJob で
 1日2回動く。設計の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照。
 
 ## 最重要ルール：古い状態を残さない（No Stale State）

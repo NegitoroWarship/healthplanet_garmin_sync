@@ -3,8 +3,8 @@
 📖 **English** · [日本語版 README → README.ja.md](README.ja.md)
 
 A bridge that asynchronously syncs the body weight stored in Tanita's **HealthPlanet**
-to **Garmin Connect**. It runs **twice a day** (10:17 / 22:17 JST) on a homelab k3s
-cluster and uploads to Garmin **only when there is a new measurement**.
+to **Garmin Connect**. It runs **twice a day** (10:17 / 22:17 JST) on a homelab
+Kubernetes cluster and uploads to Garmin **only when there is a new measurement**.
 
 ```
 HealthPlanet API (weight, tag 6021)
@@ -95,10 +95,10 @@ docker build -t healthplanet-garmin-sync:latest .
 docker run --rm -v "$PWD/data:/data" --env-file .env healthplanet-garmin-sync:latest
 ```
 
-## Deploying to Kubernetes (k3s)
+## Deploying to Kubernetes
 
 `k8s/` ships a Namespace / PVC / Secret (template) / CronJob. It runs twice a day
-(10:17 / 22:17 JST) on homelab k3s.
+(10:17 / 22:17 JST) on homelab Kubernetes.
 
 Key points:
 
@@ -111,19 +111,22 @@ Key points:
 
 ### 0. Prerequisites
 
-- `kubectl` points at your homelab k3s cluster (`kubectl get nodes`).
+- `kubectl` points at your homelab Kubernetes cluster (`kubectl get nodes`).
 - The image must be **available on the node that runs the Job** (below). For multiple nodes,
   import on all nodes or use a private registry.
 
-### 1. Build the image and import it into k3s (no registry needed)
+### 1. Build the image and make it available to the cluster node(s)
 
 ```bash
 docker build -t healthplanet-garmin-sync:latest .
 docker save healthplanet-garmin-sync:latest -o /tmp/hpgs.tar
+# Side-load onto the node's container runtime. The command is runtime-specific;
+# on k3s (containerd) it is:
 sudo k3s ctr images import /tmp/hpgs.tar          # run on each node
 ```
 
-> If you use a registry, push there and set `image:` in `k8s/cronjob.yaml` to that tag.
+> Or push to a container registry your cluster can pull from and set `image:` in
+> `k8s/cronjob.yaml` to that tag (the standard multi-node approach).
 
 ### 2. Create Namespace / PVC / Secret
 
@@ -212,13 +215,13 @@ kubectl -n healthplanet-garmin-sync logs job/<job-name>
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":true}}'
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":false}}'
 
-# On a code change: rebuild → re-import into k3s → update the cronjob with the new tag
+# On a code change: rebuild → re-import onto the node(s) → update the cronjob with the new tag
 #   (even when reusing :latest, re-importing makes the next Job pick it up)
 ```
 
 > To change `schedule`/`timeZone`, edit `k8s/cronjob.yaml` and `kubectl apply` again. The
 > minute is deliberately off `:00` to avoid the top-of-the-hour access spike. `timeZone`
-> requires k8s/k3s **v1.27+**; on older versions remove that line and use UTC:
+> requires Kubernetes **v1.27+**; on older versions remove that line and use UTC:
 > `schedule: "17 1,13 * * *"` (= 10:17 / 22:17 JST).
 
 ## Troubleshooting

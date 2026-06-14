@@ -6,7 +6,7 @@ metadata:
 spec:
   # Twice daily at 10:17 and 22:17 JST. Minute is offset off :00 on purpose to
   # avoid the top-of-the-hour stampede when everyone's cron fires at once.
-  # Requires k8s/k3s >= 1.27 for timeZone.
+  # Requires Kubernetes >= 1.27 for timeZone.
   schedule: "17 10,22 * * *"
   timeZone: Asia/Tokyo
   concurrencyPolicy: Forbid
