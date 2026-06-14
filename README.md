@@ -1,85 +1,92 @@
 # healthplanet_garmin_sync
 
-タニタの **HealthPlanet** に蓄積された体重を、**Garmin Connect** へ非同期で同期するブリッジ。
-homelab の k3s 上で **1日2回（10:17 / 22:17 JST）**動き、**新しい計測があった時だけ** Garmin にアップロードする。
+📖 **English** · [日本語版 README → README.ja.md](README.ja.md)
+
+A bridge that asynchronously syncs the body weight stored in Tanita's **HealthPlanet**
+to **Garmin Connect**. It runs **twice a day** (10:17 / 22:17 JST) on a homelab k3s
+cluster and uploads to Garmin **only when there is a new measurement**.
 
 ```
-HealthPlanet API (体重 tag 6021)
+HealthPlanet API (weight, tag 6021)
       │  OAuth2 + innerscan.json
       ▼
-  差分抽出 (state.json: 最後に送った計測日時より新しいものだけ)
+  Diff extraction (state.json: only measurements newer than the last synced one)
       │
       ▼
-  FIT 生成 (fit_tool: weight_scale_message)
+  FIT generation (fit_tool: weight_scale_message)
       │
       ▼
-  Garmin Connect (python-garminconnect: upload-service へ FIT を POST)
+  Garmin Connect (python-garminconnect: POST the FIT to upload-service)
 ```
 
-新規がゼロ件なら Garmin への接続もせず即終了する。
+If there are zero new measurements, it exits immediately without even connecting to Garmin.
 
-> 設計の詳細は [docs/DESIGN.md](docs/DESIGN.md)。リポジトリの変更規約（古い記述を残さない等）は
-> [CLAUDE.md](CLAUDE.md) を参照。
+> Design details: [docs/DESIGN.md](docs/DESIGN.md). Repository conventions (e.g. "don't
+> leave stale content behind"): [CLAUDE.md](CLAUDE.md).
 
-## 構成
+## Structure
 
-| ファイル | 役割 |
+| File | Role |
 |---|---|
-| `src/healthplanet.py` | OAuth2 トークン更新 + innerscan から体重取得 |
-| `src/fit_writer.py`   | 体重 → FIT 変換（`fit_tool`） |
-| `src/garmin.py`       | Garmin ログイン + FIT アップロード（`python-garminconnect`） |
-| `src/state.py`        | 最後に同期した計測日時の保存／読み出し |
-| `src/sync.py`         | 全体のオーケストレーション（エントリポイント） |
-| `scripts/authorize_healthplanet.py` | 初回 OAuth 認可（手動・1回だけ） |
+| `src/healthplanet.py` | OAuth2 token refresh + fetch weight from innerscan |
+| `src/fit_writer.py`   | weight → FIT conversion (`fit_tool`) |
+| `src/garmin.py`       | Garmin login + FIT upload (`python-garminconnect`) |
+| `src/state.py`        | persist/read the last synced measurement timestamp |
+| `src/sync.py`         | overall orchestration (entry point) |
+| `scripts/authorize_healthplanet.py` | first-time OAuth authorization (manual, once) |
 | `k8s/`                | Namespace / PVC / Secret / CronJob |
 
-トークン（HealthPlanet・Garmin）と state は `DATA_DIR`（既定 `./data`、k8s では PVC `/data`）に永続化される。
+Tokens (HealthPlanet & Garmin) and state are persisted under `DATA_DIR` (default `./data`,
+a PVC at `/data` on k8s).
 
-## 認証情報
+## Credentials
 
-- **HealthPlanet**: <https://www.healthplanet.jp/apis/registinfo.do> でアプリ登録し
-  `client_id` / `client_secret` を取得。`redirect_uri` は登録した URL に合わせる
-  （非Webアプリは `https://www.healthplanet.jp/success.html` が使える）。
-- **Garmin Connect**: メール / パスワード（MFA 無効前提）。
+- **HealthPlanet**: register an app at <https://www.healthplanet.jp/apis/registinfo.do>
+  and obtain `client_id` / `client_secret`. Set `redirect_uri` to match the URL you
+  registered (for non-web apps, `https://www.healthplanet.jp/success.html` works).
+- **Garmin Connect**: email / password (assumes MFA is disabled).
 
-> 注: Garmin への書き込みは公式公開 API ではなく `upload-service` 経由（Garmin アプリと同じ
-> import 経路）。Garmin 側の仕様変更で動かなくなる可能性がある個人利用向けの方式。
+> Note: writing to Garmin does not use an official public API; it goes through the
+> `upload-service` (the same import path the Garmin app uses). This is a personal-use
+> approach that may break if Garmin changes their internals.
 
-## ローカルでの実行
+## Running locally
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # 値を埋める
+cp .env.example .env   # fill in the values
 
-# 1) HealthPlanet を初回認可（access/refresh トークンを data/ に保存）
+# 1) Authorize HealthPlanet once (saves access/refresh tokens under data/)
 python -m scripts.authorize_healthplanet
 
-# 2) 【重要】既存の体重を再アップロードしないよう初期化（後述）
+# 2) [Important] Seed so existing weights are not re-uploaded (see below)
 python -m src.sync --seed
 
-# 3) 同期を実行（--seed 以降に計測した新規のみアップロード）
+# 3) Run the sync (uploads only measurements taken after the seed)
 python -m src.sync
 ```
 
-### 既存の体重を二重登録しないために（初回だけ必須）
+### Avoiding duplicate weight entries (required once, on first setup)
 
-Garmin に手動入力済みの体重がある場合、初回同期で HealthPlanet の履歴を一括アップロードすると
-**二重登録**になる。これを防ぐため、初回認可の直後に **一度だけ** seed を実行する:
+If you already have weights in Garmin (e.g. entered manually), a first sync that bulk-uploads
+HealthPlanet history would create **duplicates**. To prevent this, run seed **once** right
+after the first authorization:
 
 ```bash
 python -m src.sync --seed
 ```
 
-`--seed` は「現在 HealthPlanet にある計測まではすべて同期済み」と state に記録するだけで、
-**Garmin へは何もアップロードしない**。以降の `python -m src.sync` は **seed 実行後に新しく計測した
-体重だけ**を送る。
+`--seed` only records "everything currently in HealthPlanet is already synced" into the
+state file; it **uploads nothing** to Garmin. Subsequent `python -m src.sync` runs send
+**only weights measured after the seed**.
 
-代わりに環境変数 `SYNC_SINCE=20260614`（その日付より後の計測だけ対象）でも同じ目的を達成できる。
-k8s では Secret/環境変数で `SYNC_SINCE` を入れておくのが手軽（seed の手動実行が不要になる）。
+Alternatively, the environment variable `SYNC_SINCE=20260614` (only measurements after that
+date) achieves the same goal. On k8s, setting `SYNC_SINCE` via the Secret/env is the easiest
+(no manual seed needed).
 
-初回の Garmin ログインで `data/garmin_tokens/` にセッションが保存され、以降は再ログイン不要
-（トークンは約1年有効・自動更新）。
+On the first Garmin login the session is saved under `data/garmin_tokens/`, so no re-login is
+needed afterwards (tokens last ~1 year and auto-refresh).
 
 ## Docker
 
@@ -88,55 +95,58 @@ docker build -t healthplanet-garmin-sync:latest .
 docker run --rm -v "$PWD/data:/data" --env-file .env healthplanet-garmin-sync:latest
 ```
 
-## Kubernetes (k3s) へのデプロイ
+## Deploying to Kubernetes (k3s)
 
-`k8s/` に Namespace / PVC / Secret(雛形) / CronJob を同梱。homelab の k3s で1日2回（10:17 / 22:17 JST）動かす。
+`k8s/` ships a Namespace / PVC / Secret (template) / CronJob. It runs twice a day
+(10:17 / 22:17 JST) on homelab k3s.
 
-ポイント:
+Key points:
 
-- 事前に PVC へ入れる必要があるのは **HealthPlanet のトークンだけ**。
-  Garmin は MFA 無効なら**初回 CronJob 実行時に Secret の資格情報で自動ログイン**し、
-  セッションを PVC(`/data/garmin_tokens/`) に保存するため事前投入は不要。
-- 既存の体重を二重登録しないため、**初回ロールアウト時に `SYNC_SINCE` を設定**するのが最も手軽
-  （`k8s/cronjob.yaml` のコメントを外して日付を入れる）。
+- The only thing you must pre-load into the PVC is the **HealthPlanet token**. With MFA
+  disabled, Garmin **logs in automatically on the first CronJob run** using the Secret
+  credentials and saves the session to the PVC (`/data/garmin_tokens/`), so no pre-loading
+  is needed.
+- To avoid duplicate weight entries, the easiest option is to **set `SYNC_SINCE` on the
+  first rollout** (uncomment it in `k8s/cronjob.yaml` and put in a date).
 
-### 0. 前提
+### 0. Prerequisites
 
-- `kubectl` が homelab の k3s クラスタを指していること（`kubectl get nodes` で確認）。
-- イメージを **Job を実行するノードに載せる**こと（下記）。複数ノードなら全ノードに取り込むか
-  プライベートレジストリを使う。
+- `kubectl` points at your homelab k3s cluster (`kubectl get nodes`).
+- The image must be **available on the node that runs the Job** (below). For multiple nodes,
+  import on all nodes or use a private registry.
 
-### 1. イメージをビルドして k3s に取り込む（レジストリ不要）
+### 1. Build the image and import it into k3s (no registry needed)
 
 ```bash
 docker build -t healthplanet-garmin-sync:latest .
 docker save healthplanet-garmin-sync:latest -o /tmp/hpgs.tar
-sudo k3s ctr images import /tmp/hpgs.tar          # 各ノードで実行
+sudo k3s ctr images import /tmp/hpgs.tar          # run on each node
 ```
 
-> レジストリを使う場合は push して `k8s/cronjob.yaml` の `image:` をそのタグに合わせる。
+> If you use a registry, push there and set `image:` in `k8s/cronjob.yaml` to that tag.
 
-### 2. Namespace / PVC / Secret を作成
+### 2. Create Namespace / PVC / Secret
 
 ```bash
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/pvc.yaml
 
-# Secret 雛形をコピーして実値を記入（secret.yaml は .gitignore 済み＝コミットされない）
+# Copy the Secret template and fill in real values (secret.yaml is gitignored = never committed)
 cp k8s/secret.example.yaml k8s/secret.yaml
-# 値を埋める: HEALTHPLANET_CLIENT_ID/SECRET, GARMIN_EMAIL/PASSWORD など
+# Fill in: HEALTHPLANET_CLIENT_ID/SECRET, GARMIN_EMAIL/PASSWORD, etc.
 kubectl apply -f k8s/secret.yaml
 ```
 
-### 3. HealthPlanet トークンを PVC へ投入（初回だけ）
+### 3. Load the HealthPlanet token into the PVC (first time only)
 
-OAuth 認可はブラウザが要るためローカルで実施し、得たトークン**ファイル1つ**を PVC へコピーする。
+OAuth authorization needs a browser, so do it locally and copy the resulting **single token
+file** into the PVC.
 
 ```bash
-# (a) ローカルで初回認可（data/healthplanet_tokens.json が生成される）
+# (a) Authorize locally (generates data/healthplanet_tokens.json)
 python -m scripts.authorize_healthplanet
 
-# (b) PVC をマウントする使い捨て Pod を立てる（appuser と同じ uid:10001 で動かす）
+# (b) Spin up a throwaway Pod that mounts the PVC (run as the same uid:10001 as appuser)
 kubectl -n healthplanet-garmin-sync apply -f - <<'EOF'
 apiVersion: v1
 kind: Pod
@@ -161,65 +171,67 @@ spec:
 EOF
 kubectl -n healthplanet-garmin-sync wait --for=condition=Ready pod/hpgs-seed --timeout=60s
 
-# (c) HealthPlanet トークンだけコピー
+# (c) Copy just the HealthPlanet token
 kubectl -n healthplanet-garmin-sync cp ./data/healthplanet_tokens.json hpgs-seed:/data/healthplanet_tokens.json
 
-# (任意) ローカルで `python -m src.sync --seed` 済みなら state も入れれば SYNC_SINCE 不要
+# (optional) If you ran `python -m src.sync --seed` locally, copy state too and you won't need SYNC_SINCE
 # kubectl -n healthplanet-garmin-sync cp ./data/state.json hpgs-seed:/data/state.json
 
-# (d) 後始末
+# (d) Clean up
 kubectl -n healthplanet-garmin-sync delete pod hpgs-seed
 ```
 
-> `state.json` を入れない場合は、手順4の前に `k8s/cronjob.yaml` の `SYNC_SINCE` を有効化して
-> おくこと（さもないと初回実行で過去分が一括アップロードされる）。
+> If you don't load `state.json`, enable `SYNC_SINCE` in `k8s/cronjob.yaml` before step 4
+> (otherwise the first run bulk-uploads the past).
 
-### 4. CronJob をデプロイ
+### 4. Deploy the CronJob
 
 ```bash
 kubectl apply -f k8s/cronjob.yaml
-kubectl -n healthplanet-garmin-sync get cronjob   # SCHEDULE/TIMEZONE を確認
+kubectl -n healthplanet-garmin-sync get cronjob   # check SCHEDULE/TIMEZONE
 ```
 
-### 5. 手動トリガで疎通確認
+### 5. Smoke-test with a manual trigger
 
 ```bash
 kubectl -n healthplanet-garmin-sync create job --from=cronjob/healthplanet-garmin-sync manual-1
 kubectl -n healthplanet-garmin-sync logs -f job/manual-1
 ```
 
-ログに `Garmin login OK` と `No new measurements`（または `uploaded N measurement(s)`）が出れば成功。
-この初回実行で `/data/garmin_tokens/` も自動生成され、以降は再ログイン不要。
+Success looks like `Garmin login OK` and `No new measurements` (or `uploaded N measurement(s)`)
+in the logs. This first run also auto-creates `/data/garmin_tokens/`, so no re-login afterwards.
 
-### 6. 運用
+### 6. Operations
 
 ```bash
-# スケジュール実行の履歴とログ
+# History and logs of scheduled runs
 kubectl -n healthplanet-garmin-sync get jobs
 kubectl -n healthplanet-garmin-sync logs job/<job-name>
 
-# 一時停止 / 再開
+# Suspend / resume
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":true}}'
 kubectl -n healthplanet-garmin-sync patch cronjob healthplanet-garmin-sync -p '{"spec":{"suspend":false}}'
 
-# コード更新時: 再ビルド → k3s に再 import → 新しいタグで cronjob を更新
-#   （:latest を使い回す場合も import し直せば次回 Job から反映される）
+# On a code change: rebuild → re-import into k3s → update the cronjob with the new tag
+#   (even when reusing :latest, re-importing makes the next Job pick it up)
 ```
 
-> `schedule`/`timeZone` を変えたいときは `k8s/cronjob.yaml` を編集して `kubectl apply` し直す。
-> 分を `:00` ちょうどにせず半端な分にしてあるのは、毎時0分に集中するアクセスを避けるため。
-> `timeZone` は k8s/k3s **v1.27 以降**が必要。古い場合はこの行を消し、UTC基準で
-> `schedule: "17 1,13 * * *"`（= 10:17 / 22:17 JST）に書き換える。
+> To change `schedule`/`timeZone`, edit `k8s/cronjob.yaml` and `kubectl apply` again. The
+> minute is deliberately off `:00` to avoid the top-of-the-hour access spike. `timeZone`
+> requires k8s/k3s **v1.27+**; on older versions remove that line and use UTC:
+> `schedule: "17 1,13 * * *"` (= 10:17 / 22:17 JST).
 
-## トラブルシュート
+## Troubleshooting
 
-- **`No HealthPlanet tokens found`**: `scripts/authorize_healthplanet.py` を未実行。
-- **HealthPlanet refresh 失敗 / 401**: refresh_token 失効。再度認可スクリプトを実行。
-- **Garmin 認証失敗**: パスワード誤り / アカウントロック / MFA が有効になっている。
-  MFA を有効にした場合は `src/garmin.py` で `prompt_mfa` を渡す対応が必要。
-- **日付がずれる**: コンテナ `TZ=Asia/Tokyo` を確認（FIT は UTC 換算で書く）。
+- **`No HealthPlanet tokens found`**: `scripts/authorize_healthplanet.py` hasn't been run.
+- **HealthPlanet refresh fails / 401**: the refresh_token expired. Run the authorization
+  script again.
+- **Garmin auth fails**: wrong password / account locked / MFA enabled. If you enable MFA,
+  you must pass `prompt_mfa` in `src/garmin.py`.
+- **Dates are off**: check the container `TZ=Asia/Tokyo` (FIT is written in UTC).
 
-## 計測指標
+## Metrics
 
-現状は **体重のみ**（HealthPlanet タグ 6021）。体脂肪率(6022)等を追加したい場合は
-`healthplanet.py` の取得タグと `fit_writer.py` の `WeightScaleMessage.percent_fat` 等を拡張する。
+Currently **weight only** (HealthPlanet tag 6021). To also sync body fat (6022) etc., extend
+the fetch tags in `healthplanet.py` and `WeightScaleMessage.percent_fat` etc. in
+`fit_writer.py`.
