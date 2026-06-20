@@ -120,10 +120,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # fit_tool calls logging.basicConfig() at import time, attaching a handler to the root
+    # logger (and leaving its level at WARNING). Without force=True our basicConfig would be a
+    # no-op and every INFO line below would be silently dropped -> empty container logs. force=True
+    # replaces that handler so progress is visible in `kubectl logs` / Loki.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+        force=True,
     )
+    logger.info("healthplanet-garmin-sync starting (seed=%s)", args.seed)
     try:
         config = load_config()
         return run(config, seed=args.seed)
